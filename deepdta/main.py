@@ -6,7 +6,7 @@ from sklearn.model_selection import KFold
 from operator import itemgetter
 from torch.utils.data import DataLoader
 from data_loader import AffinityDataset
-from models import MatrixFactorization
+from models import MatrixFactorization, DeepDTA
 from torch import optim
 import torch.nn as nn
 import logging
@@ -187,6 +187,7 @@ def train_epoch_with_validation(model, train_loader, val_loader, criterion, opti
   return total_loss / len(train_loader), val_mse
 
 def cross_validate(data, params, device, metrics):
+
   kf = KFold(n_splits=5, shuffle=True, random_state=42)
   scores = {}
   # 为每个metric初始化空列表
@@ -214,7 +215,8 @@ def cross_validate(data, params, device, metrics):
     train_loader = DataLoader(train_set, batch_size=params['batch_size'], shuffle=True, generator=g)
     val_loader = DataLoader(val_set, batch_size=params['batch_size'])
     
-    model = MatrixFactorization(data['n_drugs'], data['n_targets'], params['n_factors']).to(device)
+    # model = MatrixFactorization(data['n_drugs'], data['n_targets'], params['n_factors']).to(device)
+    model = DeepDTA(data['ligands_features'], data['proteins_features'], data['max_smi_len'], data['max_seq_len'], data['charsmiset_size'], data['charprotset_size']).to(device)
     optimizer = optim.Adam(model.parameters(), lr=params['lr'], weight_decay=params['weight_decay'])
     criterion = nn.MSELoss()
 
@@ -347,15 +349,18 @@ def final_model_train(data, params, device, metrics):
   test_set = AffinityDataset(list(map(itemgetter(0), data['X_test'])), list(map(itemgetter(1), data['X_test'])), data['y_test'])
   test_loader = DataLoader(test_set, batch_size=params['batch_size'])
   
-  final_model = MatrixFactorization(data['n_drugs'], data['n_targets'], params['n_factors']).to(device)
+  #final_model = MatrixFactorization(data['n_drugs'], data['n_targets'], params['n_factors']).to(device)
+  final_model = DeepDTA(data['ligands_features'], data['proteins_features'], data['max_smi_len'], data['max_seq_len'], data['charsmiset_size'], data['charprotset_size']).to(device)
   optimizer = optim.Adam(final_model.parameters(), lr=params['lr'], weight_decay=params['weight_decay'])
   criterion = nn.MSELoss()
+
   
   for epoch in range(1, params['epochs'] + 1):
     train_loss, val_mse = train_epoch_with_validation(
         final_model, train_loader, test_loader, criterion, optimizer, device
     )
     print(f'Final Train Epoch {epoch} | Loss: {train_loss:.4f} | Test MSE: {val_mse:.4f}')
+    
     
   # 保存最佳模型
   if params['is_store_model']:
@@ -378,10 +383,12 @@ def main():
   parser.add_argument('--epochs', type=int, default=1000)
   parser.add_argument('--patience', type=int, default=10)
   parser.add_argument('--min_delta', type=float, default=0.001)
-  parser.add_argument('--model', type=str, default='MatrixFactorization')
-  parser.add_argument('--is_store_model', default=False)
+  parser.add_argument('--model', type=str, default='DeepDTA')
+  parser.add_argument('--is_store_model', default=True)
 
-  parser.add_argument('--n_factors', type=int, default=128)
+  parser.add_argument('--max_smi_len', type=int, default=100)
+  parser.add_argument('--max_seq_len', type=int, default=1000)
+
   parser.add_argument('--lr', type=float, default=0.001)
   parser.add_argument('--batch_size', type=int, default=1024)
   parser.add_argument('--weight_decay', type=float, default=1e-5)
@@ -404,7 +411,7 @@ def main():
   param_grid = {
     'n_factors': [128],
     'lr': [1e-3],
-    'batch_size': [1024],
+    'batch_size': [256],
     'weight_decay':[1e-5],
   }
 
@@ -412,24 +419,31 @@ def main():
     'epochs': args.epochs,
     'patience': args.patience, 
     'min_delta': args.min_delta,
+    'max_smi_len': 100,
+    'max_seq_len': 1000,
   }
 
   
   device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
   
   # 加载亲和度数据
-  data = load_data(dataset)
+
+  data = load_data(dataset, 
+                   max_smi_len=fixed_params['max_smi_len'],
+                   max_seq_len=fixed_params['max_seq_len'],
+                   is_load_1d_data=True)
 
   # 如果进行超参数搜索
   if args.is_search:
-    best_params, avg_stop_epoch = search_param(data, device, args.metrics,
+    best_params, avg_stop_epoch = search_param(data,
+                              device, args.metrics,
                               param_grid, fixed_params)
+    best_params['is_store_model'] = args.is_store_model
   else:
     best_params = args.__dict__
     metric_results, avg_stop_epoch = cross_validate(data, best_params, device, args.metrics)
     best_params['epochs'] = avg_stop_epoch
 
-  best_params['is_store_model'] = args.is_store_model
 
   logging.info(f"Best Params: {best_params}")
   # 根据最佳超参数训练最终模型
@@ -438,7 +452,12 @@ def main():
   for metric in args.metrics:
     all_results[metric] = []
   for seed in seeds:
-    data  = load_data(dataset, seed)
+    data  = load_data(dataset, 
+                   max_smi_len=fixed_params['max_smi_len'],
+                   max_seq_len=fixed_params['max_seq_len'],
+                   seed =seed,
+                   is_load_1d_data=True)
+    logging.info(f"Final Test by Seed {seed}:")
     results = final_model_train(data, best_params, device, args.metrics)
     for metric in args.metrics:
       all_results[metric].append(results[metric])
