@@ -154,7 +154,9 @@ def create_statistics_file(params_name, results, metrics):
   df_results.to_excel(excel_path, index=False, engine='openpyxl')
   
   # 2. 根据统计结果生成折线图，显示不同超参数对性能的影响
-  plot_param_search_results(df_results, params_name, metrics)
+  print(params_name)
+  print(metrics)
+  #plot_param_search_results(df_results, params_name, metrics)
   
 
 # 计算MSE
@@ -296,7 +298,6 @@ def search_param(data, device, metrics, param_grid, fixed_params):
 
   # 提取参数名和对应的取值列表
   param_names = list(param_grid.keys())
-  print(param_names)
   param_values = list(param_grid.values())
   # 生成所有参数组合
   param_combinations = list(itertools.product(*param_values))
@@ -367,6 +368,18 @@ def final_model_train(data, params, device, metrics):
     logging.info(f'=== Final Test {metric}: {final_test_results[metric]:.4f} ===')
   
   return final_test_results
+
+def test():
+  param_names = ['batch_size']
+  results = []
+  best_params = {'batch_size': 1024, 'epochs': 1000, 'n_factors': 128, 'lr': 0.001, 'weight_decay': 1e-5}
+  metrics = ['mse','rm2','cindex']
+  create_statistics_file(param_names, results, metrics)
+  best_avg_stop_epoch = 126
+  # 重写 Epochs 的值
+  best_params['epochs'] = best_avg_stop_epoch
+  
+  return best_params, best_avg_stop_epoch
 def main():
   # 设置随机种子，确保结果可复现
   set_seed(42)

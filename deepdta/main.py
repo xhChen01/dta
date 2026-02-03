@@ -154,7 +154,7 @@ def create_statistics_file(params_name, results, metrics):
   df_results.to_excel(excel_path, index=False, engine='openpyxl')
   
   # 2. 根据统计结果生成折线图，显示不同超参数对性能的影响
-  plot_param_search_results(df_results, params_name, metrics)
+  # plot_param_search_results(df_results, params_name, metrics)
   
 
 # 计算MSE
@@ -313,6 +313,8 @@ def search_param(data, device, metrics, param_grid, fixed_params):
     full_params = searched_params.copy()
     full_params.update(fixed_params)
 
+    full_params['lr'] = full_params['lr'] * full_params['batch_size']/128
+
     logging.info(f"Testing: {full_params}")
     metric_results, avg_stop_epoch = cross_validate(data, full_params, device, metrics)
     
@@ -411,7 +413,7 @@ def main():
   param_grid = {
     'n_factors': [128],
     'lr': [1e-3],
-    'batch_size': [256],
+    'batch_size': [32,64],
     'weight_decay':[1e-5],
   }
 

@@ -102,6 +102,8 @@ class DeepDTA(nn.Module):
         protein = self.relu(self.protein_conv3(protein))
         # Global Max Pooling
         protein = torch.max(protein, dim=2)[0]  # (batch, filters*3)
+
+        ## 通过维度拼接的方式来连接多个FC层的方式来预测
         
         # Concatenate drug and protein features
         combined = torch.cat((drug, protein), dim=1)  # (batch, filters*3*2)
@@ -113,7 +115,7 @@ class DeepDTA(nn.Module):
         x = self.dropout2(x)
         x = self.relu(self.fc3(x))
         
-        # Output layer (no activation for regression)
+        # # Output layer (no activation for regression)
         output = self.fc4(x)
         output = output.squeeze()
         
