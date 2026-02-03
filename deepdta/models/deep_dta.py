@@ -117,6 +117,6 @@ class DeepDTA(nn.Module):
         
         # # Output layer (no activation for regression)
         output = self.fc4(x)
-        output = output.squeeze()
+        output = output.squeeze(dim=1)
         
         return output

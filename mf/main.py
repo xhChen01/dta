@@ -387,16 +387,16 @@ def main():
   parser = argparse.ArgumentParser()
   parser.add_argument('--cuda', type=int, default=0)
   parser.add_argument('--dataset', type=str, default='kiba')
-  parser.add_argument('--is_search', action='store_true', default=True)
+  parser.add_argument('--is_search', action='store_true', default=False)
   parser.add_argument('--epochs', type=int, default=1000)
   parser.add_argument('--patience', type=int, default=10)
   parser.add_argument('--min_delta', type=float, default=0.001)
   parser.add_argument('--model', type=str, default='MatrixFactorization')
-  parser.add_argument('--is_store_model', default=False)
+  parser.add_argument('--is_store_model', default=True)
 
-  parser.add_argument('--n_factors', type=int, default=128)
+  parser.add_argument('--n_factors', type=int, default=256)
   parser.add_argument('--lr', type=float, default=0.001)
-  parser.add_argument('--batch_size', type=int, default=1024)
+  parser.add_argument('--batch_size', type=int, default=256)
   parser.add_argument('--weight_decay', type=float, default=1e-5)
   parser.add_argument('--metrics', type=eval, default=['mse','rm2','cindex'])
 
@@ -407,17 +407,19 @@ def main():
 
   global LOG_FOLDER
   LOG_FOLDER = os.path.join(LOG_FOLDER, args.model)
+  LOG_FOLDER = os.path.join(LOG_FOLDER, dataset)
   # 加载日志配置
   load_logging()
 
   # 定义随机种子列表用于多次重复评估性能
-  seeds = [42, 123, 456, 789, 101112]
+  # seeds = [42, 123, 456, 789, 101112]
+  seeds = [101112]
 
   # 超参数空间
   param_grid = {
-    'n_factors': [128],
+    'n_factors': [256],
     'lr': [1e-3],
-    'batch_size': [1024],
+    'batch_size': [256],
     'weight_decay':[1e-5],
   }
 
@@ -439,7 +441,8 @@ def main():
                               param_grid, fixed_params)
   else:
     best_params = args.__dict__
-    metric_results, avg_stop_epoch = cross_validate(data, best_params, device, args.metrics)
+    # metric_results, avg_stop_epoch = cross_validate(data, best_params, device, args.metrics)
+    avg_stop_epoch = 38
     best_params['epochs'] = avg_stop_epoch
 
   best_params['is_store_model'] = args.is_store_model

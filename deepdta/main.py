@@ -380,13 +380,13 @@ def main():
   # 解析命令行参数
   parser = argparse.ArgumentParser()
   parser.add_argument('--cuda', type=int, default=0)
-  parser.add_argument('--dataset', type=str, default='kiba')
-  parser.add_argument('--is_search', action='store_true', default=True)
+  parser.add_argument('--dataset', type=str, default='davis')
+  parser.add_argument('--is_search', default=True)
   parser.add_argument('--epochs', type=int, default=1000)
   parser.add_argument('--patience', type=int, default=10)
   parser.add_argument('--min_delta', type=float, default=0.001)
   parser.add_argument('--model', type=str, default='DeepDTA')
-  parser.add_argument('--is_store_model', default=True)
+  parser.add_argument('--is_store_model', default=False)
 
   parser.add_argument('--max_smi_len', type=int, default=100)
   parser.add_argument('--max_seq_len', type=int, default=1000)
@@ -403,6 +403,7 @@ def main():
 
   global LOG_FOLDER
   LOG_FOLDER = os.path.join(LOG_FOLDER, args.model)
+  LOG_FOLDER = os.path.join(LOG_FOLDER, dataset)
   # 加载日志配置
   load_logging()
 
@@ -411,19 +412,24 @@ def main():
 
   # 超参数空间
   param_grid = {
-    'n_factors': [128],
-    'lr': [1e-3],
-    'batch_size': [32,64],
+    'n_factors': [256],
+    'lr': [1e-2],
+    'batch_size': [16],
     'weight_decay':[1e-5],
   }
 
   fixed_params = {
     'epochs': args.epochs,
     'patience': args.patience, 
-    'min_delta': args.min_delta,
-    'max_smi_len': 100,
-    'max_seq_len': 1000,
+    'min_delta': args.min_delta
   }
+
+  if dataset == 'davis':
+    fixed_params['max_smi_len'] = 85
+    fixed_params['max_seq_len'] = 1200
+  elif dataset == 'kiba':
+    fixed_params['max_smi_len'] = 100
+    fixed_params['max_seq_len'] = 1000
 
   
   device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
