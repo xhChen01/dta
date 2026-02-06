@@ -11,6 +11,14 @@ def evaluate_mse(model, loader, device):
     for drugs, targets, affinities in loader:
       drugs, targets, affinities = drugs.to(device), targets.to(device), affinities.to(device)
       preds = model(drugs, targets)
+      model_output = model(drugs, targets)
+      
+      # 处理VIB模型返回元组(score, mu, logvar)的情况
+      if isinstance(model_output, tuple):
+        preds = model_output[0]  # 只取预测分数部分
+      else:
+        preds = model_output
+
       total_mse += torch.sum((preds - affinities)**2).item()
       n += len(affinities)
   return total_mse / n
@@ -116,7 +124,12 @@ def evaludate_metrics(model, loader, device, metrics):
   with torch.no_grad():
     for drugs, targets, affinities in loader:
       drugs, targets, affinities = drugs.to(device), targets.to(device), affinities.to(device)
-      preds = model(drugs, targets)
+      model_output = model(drugs, targets)
+      # 处理VIB模型返回元组(score, mu, logvar)的情况
+      if isinstance(model_output, tuple):
+        preds = model_output[0]  # 只取预测分数部分
+      else:
+        preds = model_output
       full_preds.append(preds.cpu().numpy())
       full_affinities.append(affinities.cpu().numpy())
 

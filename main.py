@@ -6,7 +6,6 @@ from sklearn.model_selection import KFold
 from operator import itemgetter
 from torch.utils.data import DataLoader
 from data_loader import AffinityDataset
-from models import MatrixFactorization, DeepDTA
 from torch import optim
 import torch.nn as nn
 import logging
@@ -18,6 +17,8 @@ import random
 import time
 from tqdm import tqdm
 from models import create_model
+from losses.create_criterion import create_criterion
+from losses.VIBLoss import get_beta
 
 # 设置全局随机种子，确保结果可复现
 def set_seed(seed=42):
@@ -68,22 +69,28 @@ def create_statistics_file(params_name, results, metrics):
   # 2. 根据统计结果生成折线图，显示不同超参数对性能的影响
   # plot_param_search_results(df_results, params_name, metrics)
   
-def train_epoch_with_validation(model, train_loader, val_loader, criterion, optimizer, device):
+def train_epoch_with_validation(epoch, model, train_loader, val_loader, criterion, optimizer, device):
   """训练一个epoch并返回验证MSE用于早停"""
   model.train()
-  total_loss = 0
+  
+  total_mse_loss = 0
+  total_kl_loss = 0
   # 为数据加载添加进度条
   for drugs, targets, affinities in tqdm(train_loader, desc="Training Batch", unit="batch", leave=False):
     drugs, targets, affinities = drugs.to(device), targets.to(device), affinities.to(device)
     optimizer.zero_grad()
-    loss = criterion(model(drugs, targets), affinities)
+    mse_loss, kl_loss = criterion(model(drugs, targets), affinities)
+
+    loss = mse_loss + get_beta(epoch) * kl_loss
     loss.backward()
+    torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
     optimizer.step()
-    total_loss += loss.item()
+    total_mse_loss += mse_loss.item()
+    total_kl_loss += kl_loss.item()
   
   # 验证集评估
   val_mse = evaluate_mse(model, val_loader, device)
-  return total_loss / len(train_loader), val_mse
+  return total_mse_loss / len(train_loader), total_kl_loss / len(train_loader), val_mse
 
 def cross_validate(data, params):
 
@@ -115,9 +122,9 @@ def cross_validate(data, params):
     val_loader = DataLoader(val_set, batch_size=params['batch_size'])
     
     # 根据模型名称创建模型实例
-    model = create_model(params['model_name'], data, params).to(params['device'])
+    model = create_model(data, params).to(params['device'])
     optimizer = optim.Adam(model.parameters(), lr=params['lr'], weight_decay=params['weight_decay'])
-    criterion = nn.MSELoss()
+    criterion = create_criterion(params)
 
     # 使用早停策略
     best_val_mse = float('inf')
@@ -127,15 +134,15 @@ def cross_validate(data, params):
 
     # 使用tqdm包装epoch循环
     for epoch in tqdm(range(1, params['epochs'] + 1), desc=f"Fold {fold+1} Training", unit="epoch", leave=False):
-      train_loss, val_mse = train_epoch_with_validation(
-              model, train_loader, val_loader, criterion, optimizer, params['device']
+      train_mse_loss, train_kl_loss, val_mse = train_epoch_with_validation(
+              epoch, model, train_loader, val_loader, criterion, optimizer, params['device']
           )
-       # L2正则化项损失
+      # L2正则化项损失
       l2_reg = 0
       for param in model.parameters():
         l2_reg += param.pow(2).sum()
       l2_reg = params['weight_decay'] * l2_reg * 0.5
-      logging.info(f'Fold {fold+1}: Epoch {epoch:2d} | Train Total Loss: {train_loss +  l2_reg:.4f} | MSE Loss: {train_loss:.4f} | L2Reg Loss: {l2_reg:.4f} | Val MSE: {val_mse:.4f}')
+      logging.info(f'Fold {fold+1}: Epoch {epoch:2d} | Train Total Loss: {train_mse_loss + train_kl_loss + l2_reg:.4f} | MSE Loss: {train_mse_loss:.4f} | KL Loss: {train_kl_loss:.4f} | L2 Reg Loss: {l2_reg:.4f} | Val MSE: {val_mse:.4f}')
       # 检查是否改善
       if val_mse < best_val_mse - params['min_delta']:
         best_val_mse = val_mse
@@ -252,15 +259,16 @@ def final_model_train(data, params):
   test_loader = DataLoader(test_set, batch_size=params['batch_size'])
   
   #final_model = MatrixFactorization(data['n_drugs'], data['n_targets'], params['n_factors']).to(device)
-  final_model = create_model(params['model_name'], data, params).to(params['device'])
-  optimizer = optim.Adam(final_model.parameters(), lr=params['lr'], weight_decay=params['weight_decay'])
-  criterion = nn.MSELoss()
+  final_model = create_model(data, params).to(params['device'])
+  optimizer = optim.AdamW(final_model.parameters(), lr=params['lr'], weight_decay=params['weight_decay'])
+  criterion = create_criterion(params)
 
   
   for epoch in range(1, params['epochs'] + 1):
-    train_loss, val_mse = train_epoch_with_validation(
-        final_model, train_loader, test_loader, criterion, optimizer, params['device']
+    train_mse_loss, train_kl_loss,  val_mse = train_epoch_with_validation(
+        epoch, final_model, train_loader, test_loader, criterion, optimizer, params['device']
     )
+    train_loss = train_mse_loss + train_kl_loss
     print(f'Final Train Epoch {epoch} | Loss: {train_loss:.4f} | Test MSE: {val_mse:.4f}')
     
     
@@ -284,7 +292,7 @@ def params_parse():
   parser.add_argument('--epochs', type=int, default=1000)
   parser.add_argument('--patience', type=int, default=10)
   parser.add_argument('--min_delta', type=float, default=0.001)
-  parser.add_argument('--model_name', type=str, default='MF')
+  parser.add_argument('--model_name', type=str, default='VIB')
   parser.add_argument('--is_store_model', default=False)
 
   parser.add_argument('--max_smi_len', type=int, default=100)
@@ -299,10 +307,12 @@ def params_parse():
 
   # 超参数空间
   param_grid = {
-    'n_factors': [128],
-    'lr': [1e-3],
-    'batch_size': [1024],
-    'weight_decay':[1e-5],
+    'n_factors': [16],
+    'lr': [5e-4],
+    'batch_size': [256],
+    'weight_decay':[0],
+    'max_beta': [5e-3],
+    'z_dim': [12]
   }
   
   fixed_params = args.__dict__

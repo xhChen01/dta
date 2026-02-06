@@ -48,7 +48,7 @@ def split_train_test_dataset(affinity, seed):
     return X_train, X_test, y_train, y_test
 
 def data_source_judge(params, data_type):
-    models_needed_seq_data = ['DeepDTA']
+    models_needed_seq_data = ['DeepDTA','VIB']
 
     if data_type == 'seq':
         if params['model_name'] in models_needed_seq_data:
