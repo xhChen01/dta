@@ -6,18 +6,18 @@ from sklearn.model_selection import KFold
 from operator import itemgetter
 from torch.utils.data import DataLoader
 from data_loader import AffinityDataset
-from models import MatrixFactorization
+from models import MatrixFactorization, DeepDTA
 from torch import optim
 import torch.nn as nn
 import logging
 import pandas as pd
 import itertools
-import matplotlib.pyplot as plt
-from metrics import evaludate_metrics
+from metrics import evaludate_metrics, evaluate_mse
 import torch
 import random
 import time
 from tqdm import tqdm
+from models import create_model
 
 # 设置全局随机种子，确保结果可复现
 def set_seed(seed=42):
@@ -54,96 +54,8 @@ def load_logging():
       ]
   )
 # -------------------------- 2. 核心函数：绘制单个参数的分析图 --------------------------
-def plot_param_impact(colors, markers, df, x_param, y_param, group_params):
-    """
-    绘制单个参数对性能的影响图
-    :param df: 数据框
-    :param x_param: 横坐标参数（如n_factors）
-    :param y_param: 纵坐标指标（如rmse）
-    :param group_params: 分组参数（其余所有参数）
-    """
-    # 1. 生成分组标签（其余参数的组合）
-    df['group_label'] = df.apply(
-        lambda row: ', '.join([f"{p}={row[p]}" for p in group_params]),
-        axis=1
-    )
-    
-    # 2. 创建图表
-    fig, ax = plt.subplots()
-    
-    # 3. 遍历每个分组绘制折线
-    for idx, (group_name, group_data) in enumerate(df.groupby('group_label')):
-        # 按横坐标参数排序（保证折线顺序正确）
-        group_data_sorted = group_data.sort_values(x_param)
-        # 绘制折线
-        ax.plot(
-            group_data_sorted[x_param],
-            group_data_sorted[y_param],
-            label=group_name,
-            color=colors[idx % len(colors)],
-            marker=markers[idx % len(markers)],
-            linewidth=2,
-            markersize=8
-        )
-    
-    # 4. 图表标注与美化
-    ax.set_title(f'{x_param}对{y_param.upper()}的影响（其余参数固定）', fontsize=16, pad=20)
-    ax.set_xlabel(x_param, fontsize=14, labelpad=10)
-    ax.set_ylabel(y_param.upper(), fontsize=14, labelpad=10)
-    
-    # 设置x轴刻度为该参数的唯一值（保证刻度精准）
-    x_ticks = sorted(df[x_param].unique())
-    ax.set_xticks(x_ticks)
-    ax.set_xticklabels([str(t) for t in x_ticks], fontsize=12)
-    
-    # 网格、图例、背景
-    ax.grid(True, axis='y')
-    # 只有当有分组参数时才创建图例
-    if group_params:
-        ax.legend(
-            title='固定参数组合', 
-            fontsize=9, 
-            title_fontsize=11, 
-            loc='best',
-            bbox_to_anchor=(1.05, 1)  # 图例靠右显示，避免遮挡折线
-        )
-    ax.set_facecolor('#f8f9fa')
-    
-    # 调整布局
-    plt.tight_layout()
-    
-    # 5. 保存图表
-    save_path = f'{x_param}_vs_{y_param}.png'
-    save_path = os.path.join(LOG_FOLDER, save_path)
-    plt.savefig(save_path, bbox_inches='tight')
-    plt.close()  # 关闭图表释放内存
-
-def plot_param_search_results(df, target_params, metrics):
-  """
-    绘制参数搜索结果的折线图
-    
-    :param df: 数据框，包含参数和性能指标
-    :param target_params: 目标参数列表，用于横坐标
-  """ 
-
-  # 全局样式设置（统一所有图表风格）
-  plt.rcParams['font.sans-serif'] = ['SimHei']  # Windows显示中文
-  # plt.rcParams['font.sans-serif'] = ['Arial Unicode MS']  # Mac显示中文
-  plt.rcParams['axes.unicode_minus'] = False
-  plt.rcParams['figure.figsize'] = (12, 8)
-  plt.rcParams['grid.alpha'] = 0.3
-  plt.rcParams['savefig.dpi'] = 300  # 保存图片的默认清晰度
 
 
-  # 定义颜色和标记（循环使用，适配不同分组）
-  colors = ['#1f77b4', '#ff7f0e', '#2ca02c', '#d62728', '#9467bd', '#8c564b', '#e377c2', '#7f7f7f']
-  markers = ['o', 's', '^', 'D', 'v', '*', 'p', 'h']
-  for metric in metrics:
-    for x_param in target_params:
-      # 分组参数 = 所有参数 - 当前横坐标参数
-      group_params = [p for p in target_params if p != x_param]
-      # 绘制并保存图表
-      plot_param_impact(colors, markers, df, x_param, metric, group_params)
 
 def create_statistics_file(params_name, results, metrics):
   global LOG_FOLDER
@@ -154,23 +66,8 @@ def create_statistics_file(params_name, results, metrics):
   df_results.to_excel(excel_path, index=False, engine='openpyxl')
   
   # 2. 根据统计结果生成折线图，显示不同超参数对性能的影响
-  print(params_name)
-  print(metrics)
-  #plot_param_search_results(df_results, params_name, metrics)
+  # plot_param_search_results(df_results, params_name, metrics)
   
-
-# 计算MSE
-def evaluate_mse(model, loader, device):
-  model.eval()
-  total_mse, n = 0, 0
-  with torch.no_grad():
-    for drugs, targets, affinities in loader:
-      drugs, targets, affinities = drugs.to(device), targets.to(device), affinities.to(device)
-      preds = model(drugs, targets)
-      total_mse += torch.sum((preds - affinities)**2).item()
-      n += len(affinities)
-  return total_mse / n
-
 def train_epoch_with_validation(model, train_loader, val_loader, criterion, optimizer, device):
   """训练一个epoch并返回验证MSE用于早停"""
   model.train()
@@ -188,11 +85,12 @@ def train_epoch_with_validation(model, train_loader, val_loader, criterion, opti
   val_mse = evaluate_mse(model, val_loader, device)
   return total_loss / len(train_loader), val_mse
 
-def cross_validate(data, params, device, metrics):
+def cross_validate(data, params):
+
   kf = KFold(n_splits=5, shuffle=True, random_state=42)
   scores = {}
   # 为每个metric初始化空列表
-  for metric in metrics:
+  for metric in params['metrics']:
     scores[metric] = []
   
   # 记录总开始时间
@@ -216,7 +114,8 @@ def cross_validate(data, params, device, metrics):
     train_loader = DataLoader(train_set, batch_size=params['batch_size'], shuffle=True, generator=g)
     val_loader = DataLoader(val_set, batch_size=params['batch_size'])
     
-    model = MatrixFactorization(data['n_drugs'], data['n_targets'], params['n_factors']).to(device)
+    # 根据模型名称创建模型实例
+    model = create_model(params['model_name'], data, params).to(params['device'])
     optimizer = optim.Adam(model.parameters(), lr=params['lr'], weight_decay=params['weight_decay'])
     criterion = nn.MSELoss()
 
@@ -229,9 +128,14 @@ def cross_validate(data, params, device, metrics):
     # 使用tqdm包装epoch循环
     for epoch in tqdm(range(1, params['epochs'] + 1), desc=f"Fold {fold+1} Training", unit="epoch", leave=False):
       train_loss, val_mse = train_epoch_with_validation(
-              model, train_loader, val_loader, criterion, optimizer, device
+              model, train_loader, val_loader, criterion, optimizer, params['device']
           )
-      logging.info(f'Fold {fold+1}: Epoch {epoch:2d} | Train Loss: {train_loss:.4f} | Val MSE: {val_mse:.4f}')
+       # L2正则化项损失
+      l2_reg = 0
+      for param in model.parameters():
+        l2_reg += param.pow(2).sum()
+      l2_reg = params['weight_decay'] * l2_reg * 0.5
+      logging.info(f'Fold {fold+1}: Epoch {epoch:2d} | Train Total Loss: {train_loss +  l2_reg:.4f} | MSE Loss: {train_loss:.4f} | L2Reg Loss: {l2_reg:.4f} | Val MSE: {val_mse:.4f}')
       # 检查是否改善
       if val_mse < best_val_mse - params['min_delta']:
         best_val_mse = val_mse
@@ -253,8 +157,8 @@ def cross_validate(data, params, device, metrics):
     # 加载最佳模型并评估
     model.load_state_dict(best_state_dict)
 
-    final_val_result = evaludate_metrics(model, val_loader, device, metrics)
-    for metric in metrics:
+    final_val_result = evaludate_metrics(model, val_loader, params['device'], params['metrics'])
+    for metric in params['metrics']:
       scores[metric].append(final_val_result[metric])
       logging.info(f'Fold {fold+1} Validation set {metric}: {final_val_result[metric]:.4f}')
     
@@ -276,29 +180,21 @@ def cross_validate(data, params, device, metrics):
 
   # 计算每个指标的均值
   mean_metrics = {}
-  for metric in metrics:
+  for metric in params['metrics']:
     mean_metrics[metric] = np.mean(scores[metric])
     logging.info(f'CV Mean {metric}: {mean_metrics[metric]:.4f}')
   
-  # 记录时间信息
-  
   return mean_metrics, avg_stop_epoch
 
-def search_param(data, device, metrics, param_grid, fixed_params):
+def search_param(data, fixed_params, searched_params):
   
-  param_grid_items = param_grid.copy().items()
-  # 将超参数网格params_grid中参数列表个数为1的参数剔除，加入到fixed_params中
-  for param_name, param_values in param_grid_items:
-    if len(param_values) == 1:
-      fixed_params[param_name] = param_values[0]
-      param_grid.pop(param_name)
-      
   # 网格搜索
   best_mse, best_params = float('inf'), None
 
   # 提取参数名和对应的取值列表
-  param_names = list(param_grid.keys())
-  param_values = list(param_grid.values())
+  param_names = list(searched_params.keys())
+  print(param_names)
+  param_values = list(searched_params.values())
   # 生成所有参数组合
   param_combinations = list(itertools.product(*param_values))
   
@@ -306,21 +202,28 @@ def search_param(data, device, metrics, param_grid, fixed_params):
   results = []
 
   # 遍历每一组参数，模拟训练并记录结果
-  for idx, params_values in enumerate(tqdm(param_combinations, desc="Hyperparameter Search", unit="param")):
-    # 将参数组合转换为字典（方便调用和记录）
-    searched_params = dict(zip(param_names, params_values))
-    full_params = searched_params.copy()
-    full_params.update(fixed_params)
-
-    logging.info(f"Testing: {full_params}")
-    metric_results, avg_stop_epoch = cross_validate(data, full_params, device, metrics)
+  for params in tqdm(param_combinations, desc="Hyperparameter Search", unit="param"):
     
+    # 将要进行网格搜索的参数更新到full_params中
+    params_dict = dict(zip(param_names, params))
+    full_params = fixed_params.copy()
+    full_params.update(params_dict)
+
+    # 根据batch_size调整学习率
+    # full_params['lr'] = full_params['lr'] * full_params['batch_size']/128
+
+    # 进行交叉验证，评估对应参数下模型的性能
+    logging.info(f"Testing: {full_params}")
+    metric_results, avg_stop_epoch = cross_validate(data, full_params)
+    
+    # 记录每组参数下的模型性能指标
     result_row = searched_params.copy()
-    for metric in metrics:
+    for metric in full_params['metrics']:
       result_row[metric] = round(metric_results[metric], 3) 
     
     results.append(result_row)
 
+    # 选择最佳参数（根据MSE）
     mse = metric_results['mse']
     if mse < best_mse:
       best_mse, best_params = mse, full_params
@@ -331,14 +234,14 @@ def search_param(data, device, metrics, param_grid, fixed_params):
   logging.info(f"Best CV MSE: {best_mse:.4f}")
   logging.info(f"Best Average Stop Epoch: {best_avg_stop_epoch}")
   
-  
-  create_statistics_file(param_names, results, metrics)
+  # 生成包含所有参数和性能指标的统计文件
+  create_statistics_file(param_names, results, full_params['metrics'])
   # 重写 Epochs 的值
   best_params['epochs'] = best_avg_stop_epoch
   
-  return best_params, best_avg_stop_epoch
+  return best_params
 
-def final_model_train(data, params, device, metrics):
+def final_model_train(data, params):
   # 最终模型训练（同样使用早停）
   train_set = AffinityDataset(list(map(itemgetter(0), data['X_train'])), list(map(itemgetter(1), data['X_train'])), data['y_train'])
   # 为DataLoader设置随机种子生成器，确保shuffle=True时结果可复现
@@ -348,124 +251,125 @@ def final_model_train(data, params, device, metrics):
   test_set = AffinityDataset(list(map(itemgetter(0), data['X_test'])), list(map(itemgetter(1), data['X_test'])), data['y_test'])
   test_loader = DataLoader(test_set, batch_size=params['batch_size'])
   
-  final_model = MatrixFactorization(data['n_drugs'], data['n_targets'], params['n_factors']).to(device)
+  #final_model = MatrixFactorization(data['n_drugs'], data['n_targets'], params['n_factors']).to(device)
+  final_model = create_model(params['model_name'], data, params).to(params['device'])
   optimizer = optim.Adam(final_model.parameters(), lr=params['lr'], weight_decay=params['weight_decay'])
   criterion = nn.MSELoss()
+
   
   for epoch in range(1, params['epochs'] + 1):
     train_loss, val_mse = train_epoch_with_validation(
-        final_model, train_loader, test_loader, criterion, optimizer, device
+        final_model, train_loader, test_loader, criterion, optimizer, params['device']
     )
     print(f'Final Train Epoch {epoch} | Loss: {train_loss:.4f} | Test MSE: {val_mse:.4f}')
+    
     
   # 保存最佳模型
   if params['is_store_model']:
     best_state_dict = final_model.state_dict().copy()
     torch.save(best_state_dict, f'{LOG_FOLDER}/best_model.pth')
 
-  final_test_results = evaludate_metrics(final_model, test_loader, device, metrics)
-  for metric in metrics:
+  final_test_results = evaludate_metrics(final_model, test_loader, params['device'], params['metrics'])
+  for metric in params['metrics']:
     logging.info(f'=== Final Test {metric}: {final_test_results[metric]:.4f} ===')
   
   return final_test_results
 
-def test():
-  param_names = ['batch_size']
-  results = []
-  best_params = {'batch_size': 1024, 'epochs': 1000, 'n_factors': 128, 'lr': 0.001, 'weight_decay': 1e-5}
-  metrics = ['mse','rm2','cindex']
-  create_statistics_file(param_names, results, metrics)
-  best_avg_stop_epoch = 126
-  # 重写 Epochs 的值
-  best_params['epochs'] = best_avg_stop_epoch
-  
-  return best_params, best_avg_stop_epoch
-def main():
-  # 设置随机种子，确保结果可复现
-  set_seed(42)
+# 参数解析
+def params_parse():
   # 解析命令行参数
   parser = argparse.ArgumentParser()
-  parser.add_argument('--cuda', type=int, default=0)
+  
   parser.add_argument('--dataset', type=str, default='kiba')
-  parser.add_argument('--is_search', action='store_true', default=False)
   parser.add_argument('--epochs', type=int, default=1000)
   parser.add_argument('--patience', type=int, default=10)
   parser.add_argument('--min_delta', type=float, default=0.001)
-  parser.add_argument('--model', type=str, default='MatrixFactorization')
-  parser.add_argument('--is_store_model', default=True)
+  parser.add_argument('--model_name', type=str, default='MF')
+  parser.add_argument('--is_store_model', default=False)
 
-  parser.add_argument('--n_factors', type=int, default=256)
+  parser.add_argument('--max_smi_len', type=int, default=100)
+  parser.add_argument('--max_seq_len', type=int, default=1000)
+
   parser.add_argument('--lr', type=float, default=0.001)
-  parser.add_argument('--batch_size', type=int, default=256)
+  parser.add_argument('--batch_size', type=int, default=1024)
   parser.add_argument('--weight_decay', type=float, default=1e-5)
   parser.add_argument('--metrics', type=eval, default=['mse','rm2','cindex'])
 
-  
-  # 解析命令行参数
-  args, unknown = parser.parse_known_args()
-  dataset = args.dataset
-
-  global LOG_FOLDER
-  LOG_FOLDER = os.path.join(LOG_FOLDER, args.model)
-  LOG_FOLDER = os.path.join(LOG_FOLDER, dataset)
-  # 加载日志配置
-  load_logging()
-
-  # 定义随机种子列表用于多次重复评估性能
-  # seeds = [42, 123, 456, 789, 101112]
-  seeds = [101112]
+  args = parser.parse_args()
 
   # 超参数空间
   param_grid = {
-    'n_factors': [256],
+    'n_factors': [128],
     'lr': [1e-3],
-    'batch_size': [256],
+    'batch_size': [1024],
     'weight_decay':[1e-5],
   }
+  
+  fixed_params = args.__dict__
 
-  fixed_params = {
-    'epochs': args.epochs,
-    'patience': args.patience, 
-    'min_delta': args.min_delta,
-  }
+  if args.dataset == 'davis':
+    fixed_params['max_smi_len'] = 85
+    fixed_params['max_seq_len'] = 1200
+  elif args.dataset == 'kiba':
+    fixed_params['max_smi_len'] = 100
+    fixed_params['max_seq_len'] = 1000
 
   
+  # 确定设备（GPU或CPU）
   device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+  fixed_params['device'] = device
+  
+  searched_params = {}
+  if param_grid is not None:
+    param_grid_items = param_grid.copy().items()
+    for param_name, param_values  in param_grid_items:
+      if len(param_values) == 1:
+        fixed_params[param_name] = param_values[0]
+        param_grid.pop(param_name)
+      else:
+        searched_params[param_name] = param_values  
+
+  return fixed_params, searched_params
+
+
+def main():
+
+  # 设置随机种子，确保结果可复现
+  set_seed(42)
+  fixed_params, searched_params = params_parse()
+  dataset = fixed_params['dataset']
+
+  # 加载日志配置
+  global LOG_FOLDER
+  LOG_FOLDER = os.path.join(LOG_FOLDER, fixed_params['model_name'])
+  LOG_FOLDER = os.path.join(LOG_FOLDER, dataset)
+  load_logging()
+
+  # 定义随机种子列表用于多次重复评估性能
+  seeds = [42, 123, 456, 789, 101112]
   
   # 加载亲和度数据
-  data = load_data(dataset)
+  data = load_data(fixed_params)
 
-  # 如果进行超参数搜索
-  if args.is_search:
-    best_params, avg_stop_epoch = search_param(data, device, args.metrics,
-                              param_grid, fixed_params)
-  else:
-    best_params = args.__dict__
-    # metric_results, avg_stop_epoch = cross_validate(data, best_params, device, args.metrics)
-    avg_stop_epoch = 38
-    best_params['epochs'] = avg_stop_epoch
-
-  best_params['is_store_model'] = args.is_store_model
-
+  # 超参数搜索返回最优参数
+  best_params = search_param(data, fixed_params, searched_params)
   logging.info(f"Best Params: {best_params}")
+
   # 根据最佳超参数训练最终模型
-  
   all_results = {}
-  for metric in args.metrics:
+  for metric in fixed_params['metrics']:
     all_results[metric] = []
   for seed in seeds:
-    data  = load_data(dataset, seed)
-    results = final_model_train(data, best_params, device, args.metrics)
-    for metric in args.metrics:
+    data = load_data(fixed_params, seed =seed)
+    logging.info(f"Final Test by Seed {seed}:")
+    results = final_model_train(data, best_params)
+    for metric in fixed_params['metrics']:
       all_results[metric].append(results[metric])
 
-  for metric in args.metrics:
+  for metric in fixed_params['metrics']:
     logging.info(f"{metric} Mean Results: {np.mean(all_results[metric]):.4f}")
     logging.info(f"{metric} Std Results: {np.std(all_results[metric]):.4f}")
   
-  # 读取药物分子SMILES字符串，并将其转换为分子图表示
-  #ligands = json.load(open(f'data/{dataset}/drugs.txt'))
-  #drug_graphs = get_drug_molecule_graph(ligands)
 
 if __name__ == '__main__':
   # 运行主程序

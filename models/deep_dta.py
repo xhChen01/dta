@@ -9,8 +9,7 @@ import torch.nn.functional as F
 
 class DeepDTA(nn.Module):
     
-    def __init__(self,ligands_features, proteins_features, max_smi_len, max_seq_len, charsmiset_size, charseqset_size,
-                 num_filters=32, filter_length1=4, filter_length2=8):
+    def __init__(self,**model_params):
         """
         Args:
             max_smi_len (int): Maximum length of SMILES strings
@@ -22,9 +21,17 @@ class DeepDTA(nn.Module):
             filter_length2 (int): Kernel size for protein sequence convolution
         """
         super(DeepDTA, self).__init__()
+        
+        max_smi_len = model_params.get('max_smi_len')
+        max_seq_len = model_params.get('max_seq_len')
+        charsmiset_size = model_params.get('charsmiset_size')
+        charseqset_size = model_params.get('charseqset_size')
+        num_filters = model_params.get('num_filters', 32)
+        filter_length1 = model_params.get('filter_length1', 4)
+        filter_length2 = model_params.get('filter_length2', 8)
         # 使用register_buffer确保这些张量与模型在同一设备上
-        self.register_buffer('ligands_features', torch.tensor(ligands_features, dtype=torch.int32, requires_grad=False))
-        self.register_buffer('proteins_features', torch.tensor(proteins_features, dtype=torch.int32, requires_grad=False))
+        self.register_buffer('ligands_features', torch.tensor(model_params.get('ligands_features'), dtype=torch.int32, requires_grad=False))
+        self.register_buffer('proteins_features', torch.tensor(model_params.get('proteins_features'), dtype=torch.int32, requires_grad=False))
         self.drug_embeddings = nn.Embedding(max_smi_len, charsmiset_size)
         self.target_embeddings = nn.Embedding(max_seq_len, charseqset_size)
     

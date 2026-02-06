@@ -10,11 +10,14 @@ from collections import OrderedDict
 from rdkit import Chem
 
 # 加载数据集中亲和度信息
-def load_data(dataset, seed=42):
+def load_data(params, seed=42):
+    
     data = {}
+    data['path'] = 'dataset/' + params['dataset'] + '/'
+    
     # 加载可能包含特殊字符或用旧版本 Python 生成的 pickle 文件时，推荐使用 encoding='latin1' 参数。
-    affinity = pickle.load(open('dataset/' + dataset + '/affinities', 'rb'), encoding='latin1')
-    if dataset == 'davis':
+    affinity = pickle.load(open(data['path'] + 'affinities', 'rb'), encoding='latin1')
+    if params['dataset'] == 'davis':
         # pkd = -log10(Kd)   pki = -log10(Ki)，将数值范围压缩到合理范围使其更符合正太分布，便于模型训练
         affinity = -np.log10(affinity / 1e9)
 
@@ -27,6 +30,9 @@ def load_data(dataset, seed=42):
     data['y_test'] = y_test
     data['n_drugs'] = n_drugs
     data['n_targets'] = n_targets
+    
+    if(data_source_judge(params, 'seq')):
+        load_seq_data(data, params['max_smi_len'], params['max_seq_len'])
 
     return data
 
@@ -40,6 +46,84 @@ def split_train_test_dataset(affinity, seed):
     X_train, X_test, y_train, y_test = train_test_split(X,y, test_size=0.1667, random_state=seed)
 
     return X_train, X_test, y_train, y_test
+
+def data_source_judge(params, data_type):
+    models_needed_seq_data = ['DeepDTA']
+
+    if data_type == 'seq':
+        if params['model_name'] in models_needed_seq_data:
+            return True
+        else:
+            return False
+
+def load_seq_data(data, max_smi_len, max_seq_len):
+
+    X_train, X_test = data['X_train'], data['X_test']
+    ligands =  json.load(open(data['path']+"drugs.txt"), object_pairs_hook=OrderedDict)
+    proteins = json.load(open(data['path']+"targets.txt"), object_pairs_hook=OrderedDict)
+
+    ligands_names = list(ligands.keys())
+    proteins_names = list(proteins.keys())
+    ligands_features = []
+    proteins_features = []
+
+    # 加载药物和蛋白质序列特征向量
+    for ligand_name in ligands_names:
+        # (n_ligands, max_smi_len)
+        ligands_features.append(label_smiles(ligands[ligand_name], max_smi_len, CHARCANSMISET))
+    for protein_name in proteins_names:
+        # (n_proteins, max_seq_len)
+        proteins_features.append(label_sequence(proteins[protein_name], max_seq_len, CHARPROTSET))
+    
+    # 转换为 numpy 数组
+    ligands_features = np.array(ligands_features)
+    proteins_features = np.array(proteins_features)
+    
+    data['max_smi_len'] = max_smi_len
+    data['max_seq_len'] = max_seq_len
+    data['charsmiset_size'] = CHARCANSMILEN
+    data['charseqset_size'] = CHARPROTLEN
+    data['ligands_features'] = ligands_features
+    data['proteins_features'] = proteins_features
+
+
+CHARPROTSET = { "A": 1, "C": 2, "B": 3, "E": 4, "D": 5, "G": 6, 
+    "F": 7, "I": 8, "H": 9, "K": 10, "M": 11, "L": 12, 
+    "O": 13, "N": 14, "Q": 15, "P": 16, "S": 17, "R": 18, 
+    "U": 19, "T": 20, "W": 21, 
+    "V": 22, "Y": 23, "X": 24, 
+    "Z": 25 }
+
+CHARPROTLEN = 25
+
+CHARCANSMISET = { "#": 1, "%": 2, ")": 3, "(": 4, "+": 5, "-": 6, 
+    ".": 7, "1": 8, "0": 9, "3": 10, "2": 11, "5": 12, 
+    "4": 13, "7": 14, "6": 15, "9": 16, "8": 17, "=": 18, 
+    "A": 19, "C": 20, "B": 21, "E": 22, "D": 23, "G": 24,
+    "F": 25, "I": 26, "H": 27, "K": 28, "M": 29, "L": 30, 
+    "O": 31, "N": 32, "P": 33, "S": 34, "R": 35, "U": 36, 
+    "T": 37, "W": 38, "V": 39, "Y": 40, "[": 41, "Z": 42, 
+    "]": 43, "_": 44, "a": 45, "c": 46, "b": 47, "e": 48, 
+    "d": 49, "g": 50, "f": 51, "i": 52, "h": 53, "m": 54, 
+    "l": 55, "o": 56, "n": 57, "s": 58, "r": 59, "u": 60,
+    "t": 61, "y": 62}
+CHARCANSMILEN = 62
+
+
+def label_smiles(line, max_smi_len, smi_ch_ind):
+	X = np.zeros(max_smi_len)
+	for i, ch in enumerate(line[:max_smi_len]): #	x, smi_ch_ind, y
+		X[i] = smi_ch_ind[ch]
+
+	return X #.tolist()
+
+def label_sequence(line, max_seq_len, smi_ch_ind):
+	X = np.zeros(max_seq_len)
+
+	for i, ch in enumerate(line[:max_seq_len]):
+		X[i] = smi_ch_ind[ch]
+
+	return X #.tolist()
 
 # 加载药物分子图
 def get_drug_molecule_graph(ligands):

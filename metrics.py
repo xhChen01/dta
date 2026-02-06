@@ -3,7 +3,7 @@ import torch
 import numpy as np
 
 
-
+# 计算MSE
 def evaluate_mse(model, loader, device):
   model.eval()
   total_mse, n = 0, 0
@@ -53,6 +53,35 @@ def get_rm2(ys_orig, ys_line):
   r02 = squared_error_zero(ys_orig, ys_line)
   return r2 * (1 - np.sqrt(np.absolute((r2 * r2) - (r02 * r02))))
 
+# def get_cindex(y_true, y_pred):
+#   # 计算 CI (一致性指数)
+#   # 优化版本：避免创建大型矩阵，使用迭代方式逐对比较
+#   y_true = np.array(y_true)
+#   y_pred = np.array(y_pred)
+#   n = len(y_true)
+  
+#   numerator = 0.0
+#   denominator = 0.0
+  
+#   # 逐对比较样本
+#   for i in range(n):
+#       for j in range(i + 1, n):  # 只比较i<j的对，避免重复
+#           # 只考虑真实值不同的样本对
+#           if y_true[i] != y_true[j]:
+#               denominator += 1
+              
+#               # 预测值与真实值顺序一致
+#               if (y_true[i] > y_true[j] and y_pred[i] > y_pred[j]) or (y_true[i] < y_true[j] and y_pred[i] < y_pred[j]):
+#                   numerator += 1.0
+#               # 预测值相等
+#               elif y_pred[i] == y_pred[j]:
+#                   numerator += 0.5
+  
+#   # 异常处理：分母为0（所有真实值相同）
+#   if denominator == 0:
+#       return np.nan  # 或返回1.0（根据场景选择）
+#   return numerator / denominator
+
 def get_cindex(y_true, y_pred):
   # 计算 CI
   y_true = np.array(y_true)
@@ -74,7 +103,6 @@ def get_cindex(y_true, y_pred):
   if denominator == 0:
       return np.nan  # 或返回1.0（根据场景选择）
   return numerator / denominator
-
 
 def get_mse(y_true, y_pred):
   mse = ((y_true - y_pred) ** 2).mean(axis=0)

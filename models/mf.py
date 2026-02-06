@@ -2,13 +2,12 @@ import torch
 import torch.nn as nn
 
 class MatrixFactorization(nn.Module):
-  def __init__(self, n_drugs, n_targets, n_factors=20):
+  def __init__(self, **model_params):
     super().__init__()
-    self.model_name = "matrix factorization"
-    self.drug_embeddings = nn.Embedding(n_drugs, n_factors)
-    self.target_embeddings = nn.Embedding(n_targets, n_factors)
-    self.drug_bias = nn.Embedding(n_drugs, 1)
-    self.target_bias = nn.Embedding(n_targets, 1)
+    self.drug_embeddings = nn.Embedding(model_params['n_drugs'], model_params['n_factors'])
+    self.target_embeddings = nn.Embedding(model_params['n_targets'], model_params['n_factors'])
+    self.drug_bias = nn.Embedding(model_params['n_drugs'], 1)
+    self.target_bias = nn.Embedding(model_params['n_targets'], 1)
     
     nn.init.normal_(self.drug_embeddings.weight, std=0.01)
     nn.init.normal_(self.target_embeddings.weight, std=0.01)
